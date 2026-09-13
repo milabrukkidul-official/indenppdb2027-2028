@@ -15,33 +15,44 @@ const SHEET_KUOTA = "KUOTA";
 /**
  * Main Web App Handler (doGet)
  * Serves the HTML user interface or responds with JSON API for GitHub Pages / External Frontend.
+ * Mendukung JSONP via parameter ?callback= untuk mengatasi CORS browser.
  */
 function doGet(e) {
   // Force flush spreadsheet changes to guarantee fresh data on reload
   SpreadsheetApp.flush();
 
+  var callback = (e && e.parameter && e.parameter.callback) ? e.parameter.callback : null;
+
+  // Helper: bungkus response dengan JSONP jika ada callback
+  function makeOutput(obj) {
+    var json = JSON.stringify(obj);
+    if (callback) {
+      // JSONP response — browser menerima sebagai script tag
+      return ContentService
+        .createTextOutput(callback + "(" + json + ")")
+        .setMimeType(ContentService.MimeType.JAVASCRIPT);
+    }
+    return ContentService
+      .createTextOutput(json)
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
   // Check if call is API request for JSON data (e.g. from GitHub Pages)
   if (e && e.parameter && e.parameter.action === 'getAppData') {
     var data = getAppData();
-    return ContentService
-      .createTextOutput(JSON.stringify(data))
-      .setMimeType(ContentService.MimeType.JSON);
+    return makeOutput(data);
   }
 
   // Handle saveApiUrl via GET (untuk akses dari luar GAS iframe)
   if (e && e.parameter && e.parameter.action === 'saveApiUrl') {
     var result = saveApiUrl(e.parameter.pin || "", e.parameter.url || "");
-    return ContentService
-      .createTextOutput(JSON.stringify(result))
-      .setMimeType(ContentService.MimeType.JSON);
+    return makeOutput(result);
   }
 
   // Handle verifyPin via GET
   if (e && e.parameter && e.parameter.action === 'verifyPin') {
     var pinResult = verifyAdminPin(e.parameter.pin || "");
-    return ContentService
-      .createTextOutput(JSON.stringify(pinResult))
-      .setMimeType(ContentService.MimeType.JSON);
+    return makeOutput(pinResult);
   }
 
   // Render HTML Page inside Google Apps Script with fresh server data

@@ -2103,6 +2103,90 @@
     // =========================================================================
 
     // Deteksi apakah ada koneksi ke database (GAS atau fetch API)
+    // =========================================================================
+    // FETCH HELPER — retry otomatis + timeout + JSONP fallback untuk GAS
+    // =========================================================================
+    function fetchWithRetry(url, options, retries, timeoutMs) {
+      retries = retries || 3;
+      timeoutMs = timeoutMs || 12000;
+      return new Promise((resolve, reject) => {
+        let attempt = 0;
+        function doFetch() {
+          attempt++;
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), timeoutMs);
+          fetch(url, Object.assign({}, options, { signal: controller.signal }))
+            .then(r => { clearTimeout(timer); return r.json(); })
+            .then(resolve)
+            .catch(err => {
+              clearTimeout(timer);
+              if (attempt < retries) {
+                const delay = attempt * 1500; // 1.5s, 3s, ...
+                console.warn(`Fetch attempt ${attempt} gagal, retry dalam ${delay}ms...`, err);
+                setTimeout(doFetch, delay);
+              } else {
+                reject(err);
+              }
+            });
+        }
+        doFetch();
+      });
+    }
+
+    // JSONP fallback — khusus untuk GET request ke GAS (mengatasi CORS)
+    function fetchJsonp(url, timeoutMs) {
+      timeoutMs = timeoutMs || 12000;
+      return new Promise((resolve, reject) => {
+        const cbName = "__gasCallback_" + Date.now();
+        const script = document.createElement("script");
+        let settled = false;
+        const cleanup = () => {
+          settled = true;
+          try { document.head.removeChild(script); } catch(e) {}
+          try { delete window[cbName]; } catch(e) {}
+        };
+        const timer = setTimeout(() => {
+          if (!settled) { cleanup(); reject(new Error("JSONP timeout")); }
+        }, timeoutMs);
+        window[cbName] = (data) => {
+          clearTimeout(timer);
+          cleanup();
+          resolve(data);
+        };
+        script.src = url + (url.includes("?") ? "&" : "?") + "callback=" + cbName + "&_t=" + Date.now();
+        script.onerror = () => {
+          clearTimeout(timer);
+          cleanup();
+          reject(new Error("JSONP script error"));
+        };
+        document.head.appendChild(script);
+      });
+    }
+
+    // GET request ke GAS: coba fetch dulu, fallback ke JSONP
+    function gasGet(params) {
+      const qs = Object.keys(params).map(k => k + "=" + encodeURIComponent(params[k])).join("&");
+      const url = gasWebAppUrl + "?" + qs;
+      return fetchWithRetry(url, {}, 2, 10000)
+        .catch(() => {
+          console.warn("Fetch GET gagal, mencoba JSONP fallback...");
+          return fetchJsonp(gasWebAppUrl + "?" + qs, 12000);
+        });
+    }
+
+    // POST request ke GAS: coba JSON body, fallback ke GET params
+    function gasPost(payload) {
+      return fetchWithRetry(gasWebAppUrl, {
+        method: "POST",
+        body: JSON.stringify(payload),
+        headers: { "Content-Type": "text/plain;charset=utf-8" }
+      }, 3, 15000).catch(() => {
+        console.warn("POST gagal, mencoba via GET fallback...");
+        const qs = Object.keys(payload).map(k => k + "=" + encodeURIComponent(payload[k])).join("&");
+        return fetchWithRetry(gasWebAppUrl + "?action=submit&" + qs, {}, 2, 12000);
+      });
+    }
+
     function detectConnectionMode() {
       if (typeof google !== "undefined" && google.script && google.script.run) return "gas";
       if (gasWebAppUrl) return "fetch";
@@ -2146,13 +2230,12 @@
           })
           .getAppData();
       } else if (mode === "fetch") {
-        fetch(`${gasWebAppUrl}?action=getAppData&_t=${Date.now()}`)
-          .then(r => r.json())
+        gasGet({ action: "getAppData" })
           .then(data => { done(true); onAppDataLoaded(data); })
           .catch(err => {
             done(false);
-            setDbStatusChip("offline", "Gagal fetch — cek URL");
-            console.warn("Fetch error:", err);
+            setDbStatusChip("offline", "Gagal terhubung — coba lagi");
+            console.warn("loadAppData error:", err);
           });
       } else {
         // Tidak ada koneksi sama sekali
@@ -2251,8 +2334,8 @@
         if (typeof google !== "undefined" && google.script && google.script.run) {
           google.script.run.withSuccessHandler(onSuccess).withFailureHandler(onFail).verifyAdminPin(pin);
         } else if (gasWebAppUrl) {
-          fetch(`${gasWebAppUrl}?action=verifyPin&pin=${encodeURIComponent(pin)}`)
-            .then(r => r.json()).then(onSuccess).catch(onFail);
+          gasGet({ action: "verifyPin", pin: pin })
+            .then(onSuccess).catch(onFail);
         } else {
           showToast("❌ API URL belum dikonfigurasi. Tidak dapat memverifikasi PIN Admin.", "error", 5000);
           switchUserMode("tamu");
@@ -2396,9 +2479,7 @@
           .withFailureHandler(() => { persist(); done(true, "💾 Disimpan di browser (server offline)."); })
           .saveApiUrl(pin, url);
       } else if (gasWebAppUrl || url) {
-        const ep = gasWebAppUrl || url;
-        fetch(`${ep}?action=saveApiUrl&pin=${encodeURIComponent(pin)}&url=${encodeURIComponent(url)}`)
-          .then(r => r.json())
+        gasGet({ action: "saveApiUrl", pin: pin, url: url })
           .then(res => { persist(); done(res.success, res.success ? "✅ Tersimpan ke spreadsheet & browser!" : "💾 Disimpan di browser."); })
           .catch(() => { persist(); done(true, "💾 Disimpan di browser (offline mode)."); });
       } else {
@@ -2464,12 +2545,7 @@
           .withFailureHandler(onSubmissionError)
           .processSubmission(payload);
       } else if (gasWebAppUrl) {
-        fetch(gasWebAppUrl, {
-          method: "POST",
-          body: JSON.stringify(payload),
-          headers: { "Content-Type": "text/plain;charset=utf-8" }
-        })
-          .then(r => r.json())
+        gasPost(payload)
           .then(onSubmissionSuccess)
           .catch(onSubmissionError);
       } else {
