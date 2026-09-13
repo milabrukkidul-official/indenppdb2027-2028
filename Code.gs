@@ -402,7 +402,7 @@ function setupDatabase() {
     ["KUOTA_DEFAULT", "112", "Jumlah Kuota Maksimal Default Siswa Per Tahun"],
     ["TAHUN_PELAJARAN_UTAMA", "2027/2028", "Tahun Pelajaran Utama Aktif"],
     ["PIN_ADMIN", "1234", "PIN Akses Mode Admin (Default: 1234)"],
-    ["API_URL", "https://script.google.com/macros/s/AKfycbwOpXOKCvg7snRxULUOXpVsASVJzRxhCbkn0wlusIosqU2b3RM8KdY1t3Xw-0XpZATu/exec", "URL Web App GAS (diisi otomatis setelah deploy, atau paste manual)"]
+    ["API_URL", "https://script.google.com/macros/s/AKfycbzG2ZvYAO0t0HbAO5w_ujh0bnxcqhHX7R7szXV5iuFqM-VktwNnt0dN0n5gcbxWgUh-/exec", "URL Web App GAS (diisi otomatis setelah deploy, atau paste manual)"]
   ];
 
   sheetSettings.getRange(1, 1, 1, settingsHeaders.length)
