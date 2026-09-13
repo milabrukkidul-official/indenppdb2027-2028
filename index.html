@@ -1482,6 +1482,19 @@
           </button>
         </div>
 
+        <!-- Tombol Keluar Mode Admin (hanya tampil saat admin aktif) -->
+        <div id="adminExitBtnWrapper" style="display:none; margin-bottom: 12px;">
+          <button type="button" onclick="switchUserMode('tamu')"
+            style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;
+              padding:10px 16px;border-radius:var(--radius-md);border:1.5px solid var(--danger-red);
+              background:rgba(230,57,70,0.08);color:var(--danger-red);font-size:0.85rem;font-weight:700;
+              cursor:pointer;transition:all 0.2s ease;"
+            onmouseover="this.style.background='var(--danger-red)';this.style.color='#fff'"
+            onmouseout="this.style.background='rgba(230,57,70,0.08)';this.style.color='var(--danger-red)'">
+            <i class="fa-solid fa-right-from-bracket"></i> Keluar dari Mode Admin
+          </button>
+        </div>
+
         <!-- Orbit Dot Logo Animation -->
         <div class="logo-container">
           <div class="orbit-ring">
@@ -1962,7 +1975,11 @@
     };
     let currentSelectedYear = "2027/2028";
     let lastSubmissionData = null;
-    let gasWebAppUrl = localStorage.getItem("PPDB_GAS_API_URL") || "https://script.google.com/macros/s/AKfycbzG2ZvYAO0t0HbAO5w_ujh0bnxcqhHX7R7szXV5iuFqM-VktwNnt0dN0n5gcbxWgUh-/exec";
+    // URL GAS Web App — hardcoded sebagai koneksi utama, tidak bisa ditimpa localStorage
+    const GAS_HARDCODED_URL = "https://script.google.com/macros/s/AKfycbzG2ZvYAO0t0HbAO5w_ujh0bnxcqhHX7R7szXV5iuFqM-VktwNnt0dN0n5gcbxWgUh-/exec";
+    let gasWebAppUrl = GAS_HARDCODED_URL;
+    // Paksa localStorage ikut URL hardcoded agar sinkron
+    localStorage.setItem("PPDB_GAS_API_URL", GAS_HARDCODED_URL);
     let currentUserMode = "tamu";
     let adminVerified = false;
     let _adminPin = "";
@@ -2163,14 +2180,14 @@
         const logo = document.getElementById("webLogo");
         if (logo && res.settings.logoUrl) logo.src = res.settings.logoUrl;
 
-        // Auto-sync API URL dari spreadsheet ke localStorage
+        // Auto-sync API URL dari spreadsheet ke localStorage — tidak menimpa URL hardcoded
         if (res.settings.apiUrl && res.settings.apiUrl.trim()) {
           const urlFromSheet = res.settings.apiUrl.trim();
-          if (urlFromSheet !== gasWebAppUrl) {
-            gasWebAppUrl = urlFromSheet;
-            localStorage.setItem("PPDB_GAS_API_URL", urlFromSheet);
+          // Hanya update jika URL dari sheet sama dengan URL hardcoded (tidak menimpa konfigurasi)
+          if (urlFromSheet && gasWebAppUrl === GAS_HARDCODED_URL) {
+            // Pastikan input field terisi
             const inp = document.getElementById("inputApiUrl");
-            if (inp && !inp.value) inp.value = urlFromSheet;
+            if (inp && !inp.value) inp.value = gasWebAppUrl;
           }
         }
         renderSavedApiUrl();
@@ -2189,6 +2206,7 @@
       const apiPanel = document.getElementById("apiUrlPanel");
       const mainForm = document.getElementById("ppdbForm");
       const adminDash = document.getElementById("adminDashboardSection");
+      const adminExitBtn = document.getElementById("adminExitBtnWrapper");
 
       if (mode === "tamu") {
         if (btnTamu) btnTamu.classList.add("active");
@@ -2196,6 +2214,7 @@
         if (apiPanel) apiPanel.style.display = "none";
         if (mainForm) mainForm.style.display = "";
         if (adminDash) adminDash.style.display = "none";
+        if (adminExitBtn) adminExitBtn.style.display = "none";
         adminVerified = false;
         return;
       }
@@ -2224,9 +2243,9 @@
           }
         };
         const onFail = () => {
-          // Fallback offline — izinkan masuk
-          adminVerified = true; _adminPin = pin;
-          _showAdminUI(apiPanel, mainForm, adminDash);
+          // Tidak ada koneksi ke server — tolak akses, jangan izinkan bypass
+          showToast("❌ Tidak dapat memverifikasi PIN. Pastikan koneksi internet aktif dan API URL sudah diatur.", "error", 5000);
+          switchUserMode("tamu");
         };
 
         if (typeof google !== "undefined" && google.script && google.script.run) {
@@ -2235,7 +2254,8 @@
           fetch(`${gasWebAppUrl}?action=verifyPin&pin=${encodeURIComponent(pin)}`)
             .then(r => r.json()).then(onSuccess).catch(onFail);
         } else {
-          onFail(); // Offline — langsung masuk
+          showToast("❌ API URL belum dikonfigurasi. Tidak dapat memverifikasi PIN Admin.", "error", 5000);
+          switchUserMode("tamu");
         }
       });
     }
@@ -2248,6 +2268,8 @@
       if (pinEl) pinEl.value = _adminPin;
       const inp = document.getElementById("inputApiUrl");
       if (inp && gasWebAppUrl && !inp.value) inp.value = gasWebAppUrl;
+      const adminExitBtn = document.getElementById("adminExitBtnWrapper");
+      if (adminExitBtn) adminExitBtn.style.display = "block";
       showToast("✅ Mode Admin aktif", "success", 3000);
     }
 
@@ -2356,8 +2378,10 @@
       };
 
       const persist = () => {
-        gasWebAppUrl = url;
-        localStorage.setItem("PPDB_GAS_API_URL", url);
+        // gasWebAppUrl sudah hardcoded — hanya update localStorage jika URL sama dengan hardcoded
+        if (url === GAS_HARDCODED_URL) {
+          localStorage.setItem("PPDB_GAS_API_URL", url);
+        }
         renderSavedApiUrl();
         // Langsung sync data dari database setelah API URL tersimpan
         setTimeout(() => loadAppData(true), 500);
